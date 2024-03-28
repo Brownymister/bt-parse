@@ -1,5 +1,6 @@
 import requests
 import numpy as np
+import json
 import pandas as pd
 import sys
 import csv
@@ -15,7 +16,7 @@ def main():
     sns.set_theme()
     parlament = []
 
-    filename = 'output.csv'  # Replace with your CSV file name
+    filename = './output/output.csv'  # Replace with your CSV file name
     if os.path.exists(filename):
         parlament = read_csv_to_dicts(filename)
     else:
@@ -25,26 +26,45 @@ def main():
         r = requests.get(url)
 
         # parse
-        json = r.json()
+        json_str = r.json()
         # save
-        for key, value in json.items():
+        for key, value in json_str.items():
             if key != "-1":
                 print(key)
-                value["job"], value["office"] = get_more_bio_info(
-                    value["href"])
+                value["job"], value["office"], value[
+                    "socials"] = get_more_bio_info(value["href"])
                 parlament.append(value)
 
         df = pd.DataFrame(parlament)
         df.to_csv('output.csv', index=False)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "--job":
-        search_job(parlament, sys.argv[2])
+    for u in parlament:
+        u["socials"] = json.loads(u["socials"].replace("'", "\""))
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--job":
+            search_job(parlament, sys.argv[2])
+        elif sys.argv[1] == "debug":
+            for i in range(0, 10):
+                r = get_more_bio_info(parlament[i]["href"])
+                print(r)
     else:
         plot_age_group(parlament)
         party_plot(parlament)
         plot_jobs(parlament)
         plot_gender_per_party(parlament)
         plot_job_per_party(parlament)
+        plot_socials_by_field(
+            parlament, "ageGroup",
+            "Social Media Accounts (Prozentanteile) pro Altersgruppe im Bundestag (BtW 2021)"
+        )
+        plot_socials_by_field(
+            parlament, "party",
+            "Social Media Accounts (Prozentanteile) pro Fraktion im Bundestag (BtW 2021)"
+        )
+        plot_socials_by_field(parlament, "geschlecht")
+        plot_socials_by_field(parlament, "federalState")
+        filter_for_https(parlament)
 
 
 def get_more_bio_info(sub_url):
@@ -58,25 +78,147 @@ def get_more_bio_info(sub_url):
     xpath_job = '/html/body/main/div[3]/div/div/div[1]/div[2]/div/p'
     job = dom.xpath(xpath_job)[0]
 
-    xpath_office = '/html/body/main/div[3]/div/div/div[1]/div[5]/div/div[1]/p[1]'
+    xpath_office = '/html/body/main/div[3]/div/div/div[1]/div[5]/div/div[1]/p'
     office = dom.xpath(xpath_office)
     if len(office) == 0:
         office = ["not found"]
+    else:
+        office = [dom.xpath(xpath_office)[0].text]
 
-    return (job.text, office[0])
+    xpath_socials = '/html/body/main/div[3]/div/div/div[1]/div[5]/div/div[3]/ul/li'
+    socials_elements = dom.xpath(xpath_socials)
+    socials = []
+    for social_element in socials_elements:
+        socials.append({
+            social_element.find("a").text.replace(" ", "").replace("\n", ""):
+            social_element.find("a").get("href")
+        })
+
+    return (job.text, office[0], socials)
 
 
 def search_job(parlament, job):
     # print as csv
 
     print(
-        "name; job; party; geschlecht; ageGroup; federalState; img; direct; href; id"
+        "name; job; party; geschlecht; ageGroup; federalState; img; direct; href; id; socials"
     )
     for u in parlament:
         if job in u["job"]:
             print(
-                '{name};{job};{party};{geschlecht};{ageGroup};{federalState};{img};{direct};{href};{id}'
+                '{name};{job};{party};{geschlecht};{ageGroup};{federalState};{img};{direct};{href};{id};{socials}'
                 .format(**u))
+
+
+def plot_socials_by_field(parlament, group_name, title=""):
+    age_groups = {}
+
+    # order parlament by age
+    parlament = sorted(parlament, key=lambda x: x["ageGroup"])
+
+    for u in parlament:
+        age = u[group_name]
+        socials = u["socials"]
+        for social in socials:
+            age_groups[age] = age_groups.get(age, {})
+            age_groups[age][list(social.keys())[0]] = age_groups[age].get(
+                list(social.keys())[0], 0) + 1
+
+    # percentage shares b
+    for age in age_groups:
+        total = 0
+        for u in parlament:
+            if u[group_name] == age:
+                total += 1
+        for social in age_groups[age]:
+            age_groups[age][social] = (age_groups[age][social] / total) * 100
+
+    homepage = [i.get("Homepage", 0) for i in [t for t in age_groups.values()]]
+    x = [i.get("X", 0) for i in [t for t in age_groups.values()]]
+    instagram = [
+        i.get("Instagram", 0) for i in [t for t in age_groups.values()]
+    ]
+    youtube = [i.get("Youtube", 0) for i in [t for t in age_groups.values()]]
+    tiktok = [i.get("TikTok", 0) for i in [t for t in age_groups.values()]]
+
+    data = {
+        "Homepage": homepage,
+        "X": x,
+        "Instagram": instagram,
+        "Youtube": youtube,
+        "TikTok": tiktok
+    }
+
+    fig, ax = plt.subplots()
+    fig.set_size_inches(16, 16)
+    plt.title(title)
+    bar_plot(ax,
+             data,
+             list(age_groups.keys()),
+             colors=[
+                 "tab:green", "tab:blue", "tab:orange", "tab:red", "tab:purple"
+             ])
+    plt.savefig("./output/socials_by_" + group_name + ".png")
+
+
+def filter_for_https(parlament):
+    protocolls = {}
+    for u in parlament:
+        if len(u["socials"]) == 0:
+            continue
+
+        homepage_url = ""
+        for social in u["socials"]:
+            if list(social.keys())[0] == "Homepage":
+                homepage_url = list(social.values())[0]
+
+        if homepage_url == "":
+            continue
+
+        homepage_protocol = homepage_url.split("://")[0]
+        protocolls[homepage_protocol] = protocolls.get(homepage_protocol,
+                                                       0) + 1
+
+    fig, ax = plt.subplots()
+    fig.set_size_inches(8, 8)
+    plt.xticks(rotation=45)
+    ax.bar([t[0] for t in protocolls.items()],
+           [t[1] for t in protocolls.items()],
+           width=1,
+           edgecolor="white")
+    plt.savefig("./output/protocolls_plot.png")
+
+
+def bar_plot(ax,
+             data,
+             group_labels=None,
+             colors=None,
+             total_width=0.8,
+             single_width=1,
+             legend=True):
+    if colors is None:
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+    n_bars = len(data)
+    bar_width = total_width / n_bars
+    bars = []
+
+    for i, (name, values) in enumerate(data.items()):
+        x_offset = (i - n_bars / 2) * bar_width + bar_width / 2
+        for x, y in enumerate(values):
+            bar = ax.bar(x + x_offset,
+                         y,
+                         width=bar_width * single_width,
+                         color=colors[i % len(colors)])
+            # label=list(data.keys())[i])
+        bars.append(bar[0])
+
+    if legend:
+        ax.legend(bars, data.keys())
+
+    if group_labels:
+        ax.set_xticks(range(len(group_labels)))
+        ax.set_xticklabels(group_labels, rotation=90, ha='center')
 
 
 def plot_job_per_party(parlament):
@@ -154,7 +296,7 @@ def plot_gender_per_party(parlament):
 
     # Create legend & Show graphic
     plt.legend()
-    plt.savefig("gender_plot.png")
+    plt.savefig("./output/gender_plot.png")
 
 
 def plot_jobs(parlament):
@@ -186,7 +328,7 @@ def plot_jobs(parlament):
            width=1,
            edgecolor="white")
 
-    plt.savefig("job_plot.png")
+    plt.savefig("./output/job_plot.png")
 
 
 def plot_age_group(parlament):
@@ -206,7 +348,7 @@ def plot_age_group(parlament):
            width=1,
            edgecolor="white")
 
-    plt.savefig("age_plot.png")
+    plt.savefig("./output/age_plot.png")
 
 
 def party_plot(parlament):
@@ -240,9 +382,8 @@ def party_plot(parlament):
            width=1,
            edgecolor="white",
            color=color)
-    # linewidth=0.7)
 
-    plt.savefig("party_plot.png")
+    plt.savefig("./output/party_plot.png")
 
 
 def read_csv_to_dicts(filename):
