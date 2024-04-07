@@ -1,6 +1,8 @@
 import requests
 import numpy as np
 import json
+import asyncio
+from pyppeteer import launch
 import pandas as pd
 import sys
 import csv
@@ -44,10 +46,17 @@ def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == "--job":
             search_job(parlament, sys.argv[2])
-        elif sys.argv[1] == "debug":
-            for i in range(0, 10):
-                r = get_more_bio_info(parlament[i]["href"])
-                print(r)
+        elif sys.argv[1] == "--debug":
+            for i in parlament:
+                if i["name"] == sys.argv[2]:
+                    b = get_more_bio_info(i["href"])
+                    v = asyncio.get_event_loop().run_until_complete(
+                        get_voting_data(i["href"]))
+                    # print(b)
+                    print("date;title;vote")
+                    for j in v:
+                        print("{date};{title};{vote}".format(**j))
+
     else:
         plot_age_group(parlament)
         party_plot(parlament)
@@ -65,6 +74,7 @@ def main():
         plot_socials_by_field(parlament, "geschlecht")
         plot_socials_by_field(parlament, "federalState")
         filter_for_https(parlament)
+        print(get_all_socials(parlament))
 
 
 def get_more_bio_info(sub_url):
@@ -95,6 +105,63 @@ def get_more_bio_info(sub_url):
         })
 
     return (job.text, office[0], socials)
+
+
+async def get_voting_data(sub_url):
+    url = "https://www.bundestag.de" + sub_url + "?subview=na"
+    # print(url)
+    xpath_button = '/html/body/main/div[3]/div/div/div[2]/nav[1]/div/button[2]'
+
+    browser = await launch()
+    page = await browser.newPage()
+    await page.goto(url)
+    # Your code here
+    content = await page.content()
+    elements = await page.xpath(xpath_button)
+    # Do something with the elements, e.g., print the text content of the first element
+    data_url = ""
+    if elements:
+        data_url = await page.evaluate(
+            '(element) => element.getAttribute("data-url")', elements[0])
+        # print(data_url)
+        data_url = data_url[:-2]
+    await browser.close()
+
+    offset = 0
+
+    voting_data = []
+
+    while offset != -1:
+        url = "https://www.bundestag.de" + data_url + str(offset)
+        r = requests.get(url)
+        t = r.text
+
+        soup = BeautifulSoup(t, "html.parser")
+
+        tr_elements = soup.find_all('tr')
+        if len(tr_elements) <= 1:
+            offset = -1
+            break
+
+        for tr in tr_elements:
+            # Find all <td> elements inside the current <tr> element
+            td_elements = tr.find_all('td')
+
+            if len(td_elements) == 0:
+                continue
+
+            date = td_elements[0].find("p").text
+            title = td_elements[1].find("p").text
+            vote = td_elements[2].find("p").text
+            my_voting_data = {}
+            my_voting_data["date"] = date
+            my_voting_data["title"] = title
+            my_voting_data["vote"] = vote
+            voting_data.append(my_voting_data)
+
+        offset = offset + 10
+
+    return voting_data
 
 
 def search_job(parlament, job):
@@ -134,31 +201,56 @@ def plot_socials_by_field(parlament, group_name, title=""):
             age_groups[age][social] = (age_groups[age][social] / total) * 100
 
     homepage = [i.get("Homepage", 0) for i in [t for t in age_groups.values()]]
+    facebook = [i.get("Facebook", 0) for i in [t for t in age_groups.values()]]
     x = [i.get("X", 0) for i in [t for t in age_groups.values()]]
+    linkedin = [
+        i.get("LinkedIn", 0) or i.get("Linkedin", 0)
+        for i in [t for t in age_groups.values()]
+    ]
     instagram = [
         i.get("Instagram", 0) for i in [t for t in age_groups.values()]
     ]
-    youtube = [i.get("Youtube", 0) for i in [t for t in age_groups.values()]]
-    tiktok = [i.get("TikTok", 0) for i in [t for t in age_groups.values()]]
+    youtube = [
+        i.get("Youtube", 0) or i.get("Youtube", 0)
+        for i in [t for t in age_groups.values()]
+    ]
+    tiktok = [
+        i.get("TikTok", 0) or i.get("Tiktok", 0)
+        for i in [t for t in age_groups.values()]
+    ]
 
     data = {
         "Homepage": homepage,
+        "Facebook": facebook,
         "X": x,
+        "LinkedIn": linkedin,
         "Instagram": instagram,
         "Youtube": youtube,
         "TikTok": tiktok
     }
 
     fig, ax = plt.subplots()
-    fig.set_size_inches(16, 16)
+    fig.set_size_inches(20, 10)
     plt.title(title)
     bar_plot(ax,
              data,
              list(age_groups.keys()),
              colors=[
-                 "tab:green", "tab:blue", "tab:orange", "tab:red", "tab:purple"
+                 "tab:green", "tab:olive", "tab:blue", "tab:cyan",
+                 "tab:orange", "tab:red", "tab:purple"
              ])
     plt.savefig("./output/socials_by_" + group_name + ".png")
+
+
+def get_all_socials(parlament):
+    all_socials = {}
+    for u in parlament:
+        socials = u["socials"]
+        for social in socials:
+            all_socials[list(social.keys())[0]] = all_socials.get(
+                list(social.keys())[0], 0) + 1
+
+    return all_socials
 
 
 def filter_for_https(parlament):
