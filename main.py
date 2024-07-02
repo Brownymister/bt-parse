@@ -278,6 +278,8 @@ def filter_for_https(parlament):
            [t[1] for t in protocolls.items()],
            width=1,
            edgecolor="white")
+    
+    plt.title("Number of ssl uses on the homepages of members of parliament")
     plt.savefig("./output/protocolls_plot.png")
 
 
