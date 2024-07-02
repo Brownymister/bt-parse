@@ -30,9 +30,16 @@ voting_data = read_csv_file(file_path)
 def main():
     sns.set_theme()
     plot_voting_data(voting_data)
-    plot_voting_data_overtime(voting_data, "Ja")
-    plot_voting_data_overtime(voting_data, "Nein")
-    plot_voting_data_overtime(voting_data, "Nicht abg.")
+    fig, ax = plt.subplots()
+    plot_voting_data_overtime(voting_data, "Ja", ax)
+    plot_voting_data_overtime(voting_data, "Nein", ax)
+    plot_voting_data_overtime(voting_data, "Nicht abg.", ax)
+
+    ax.set(xlabel='Date',
+           ylabel='Number of votes',
+           title='Number of votes over time (' + str(voting_behavior) + ')')
+
+    plt.savefig("./output/voting_over_time_test.png")
 
 
 def plot_voting_data(voting_data):
@@ -53,7 +60,7 @@ def plot_voting_data(voting_data):
     plt.savefig("./output/voting_plot.png")
 
 
-def plot_voting_data_overtime(voting_data, voting_behavior):
+def plot_voting_data_overtime(voting_data, voting_behavior, ax):
     all_votes = {}
     vote_behavior = {}
 
@@ -68,21 +75,13 @@ def plot_voting_data_overtime(voting_data, voting_behavior):
     data = sorted(data.items(), key=lambda x: x[0])
     print(data)
 
-    fig, ax = plt.subplots()
-
     x = [t[0] for t in data]
     y = [t[1] for t in data]
 
     ax.plot(x, y, linewidth=2.0)
 
-    ax.set(xlabel='Date',
-           ylabel='Number of votes',
-           title='Number of votes over time (' + str(voting_behavior) + ')')
-
     ax.tick_params(axis='x', labelrotation=45)
-
-    plt.savefig("./output/voting_plot_overtime" + str(voting_behavior) +
-                ".png")
+    return ax
 
 
 """
@@ -95,7 +94,7 @@ def get_average_voting(voting_behavior, all_votes):
     avg = {}
 
     for u in voting_behavior:
-        avg[u] =  voting_behavior[u] / all_votes[u]
+        avg[u] = voting_behavior[u] / all_votes[u]
 
     return avg
 
